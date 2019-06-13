@@ -1,0 +1,77 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: 'aws-ugs.de - June 2019'
+Globals:
+  Function:
+    Runtime: 'nodejs8.10'
+Resources:
+  StateMachineRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: !Sub 'states.${AWS::Region}.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      Policies:
+      - PolicyName: states
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action: 'lambda:InvokeFunction'
+            Resource: !GetAtt 'Function.Arn'
+  StateMachine:
+    Type: 'AWS::StepFunctions::StateMachine'
+    Properties:
+      RoleArn: !GetAtt 'StateMachineRole.Arn'
+      StateMachineName: !Ref 'AWS::StackName'
+      DefinitionString: !Sub |
+        {
+          "Comment": "aws-ugs.de - June 2019",
+          "StartAt": "Execute",
+          "Version": "1.0",
+          "States": {
+            "Execute": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+              "Parameters":{  
+                "FunctionName": "${Function}",
+                "Payload":{  
+                  "input.$": "$",
+                  "token.$": "$$.Task.Token"
+                }
+              },
+              "Retry": [{
+                "ErrorEquals": ["States.TaskFailed"],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 16,
+                "BackoffRate": 2
+              }],
+              "End": true
+            }
+          }
+        }
+  Table:
+    Type: 'AWS::Serverless::SimpleTable'
+    Properties:
+      PrimaryKey:
+        Name: token
+        Type: String
+  Function:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: 'lambda.handler'
+      Policies:
+      - DynamoDBCrudPolicy: {TableName: !Ref Table}
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref Table
+  FunctionLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${Function}'
+      RetentionInDays: 14
+  
